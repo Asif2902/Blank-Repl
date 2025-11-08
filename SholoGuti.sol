@@ -24,6 +24,27 @@ contract SholoGuti {
         bool hasJoined;
     }
     
+    struct RoomData {
+        string roomId;
+        RoomType roomType;
+        address player1;
+        address player2;
+        uint256 player1Elo;
+        uint256 player2Elo;
+        uint256 betAmount;
+        GameStatus status;
+        address currentTurn;
+        uint256 moveCount;
+        uint256 movesWithoutCapture;
+        uint256 lastMoveTime;
+        address winner;
+        bool drawOfferedBy1;
+        bool drawOfferedBy2;
+        BotDifficulty botDifficulty;
+        uint8 player1PieceCount;
+        uint8 player2PieceCount;
+    }
+    
     struct Room {
         string roomId;
         RoomType roomType;
@@ -39,7 +60,8 @@ contract SholoGuti {
         bool drawOfferedBy1;
         bool drawOfferedBy2;
         BotDifficulty botDifficulty;
-        mapping(uint8 => int8) board; // 37 positions: 0-36
+        mapping(uint8 => int8) board;
+        bool payoutCompleted;
     }
     
     struct Move {
@@ -51,28 +73,32 @@ contract SholoGuti {
     
     // State variables
     mapping(address => uint256) public playerElo;
-    mapping(string => Room) public rooms;
+    mapping(string => Room) private rooms;
     mapping(string => Move[]) public gameHistory;
     mapping(address => bool) public hasPlayed;
+    mapping(address => string[]) private playerRooms;
     
-    string[] public activeRooms;
-    string[] public waitingRooms;
+    string[] private activeRooms;
+    string[] private waitingRooms;
     
     address public owner;
     uint256 public platformBalance;
+    uint256 public totalGamesPlayed;
+    uint256 public totalBetsProcessed;
     
     // Board topology - adjacency list for the 37-node board
     mapping(uint8 => uint8[]) public adjacentNodes;
     
     // Events
-    event RoomCreated(string roomId, RoomType roomType, address creator, uint256 betAmount);
-    event PlayerJoined(string roomId, address player);
-    event MoveMade(string roomId, address player, uint8 from, uint8 to, MoveType moveType);
-    event GameCompleted(string roomId, address winner, GameStatus status);
-    event DrawOffered(string roomId, address offerer);
-    event DrawAccepted(string roomId);
-    event GameResigned(string roomId, address resignee);
-    event EloUpdated(address player, uint256 newElo);
+    event RoomCreated(string indexed roomId, RoomType roomType, address indexed creator, uint256 betAmount);
+    event PlayerJoined(string indexed roomId, address indexed player);
+    event MoveMade(string indexed roomId, address indexed player, uint8 from, uint8 to, MoveType moveType);
+    event GameCompleted(string indexed roomId, address indexed winner, GameStatus status, uint256 player1NewElo, uint256 player2NewElo);
+    event DrawOffered(string indexed roomId, address indexed offerer);
+    event DrawAccepted(string indexed roomId);
+    event GameResigned(string indexed roomId, address indexed resignee, address indexed winner);
+    event EloUpdated(address indexed player, uint256 oldElo, uint256 newElo);
+    event PayoutProcessed(string indexed roomId, address indexed recipient, uint256 amount);
     
     constructor() {
         owner = msg.sender;
@@ -81,46 +107,31 @@ contract SholoGuti {
     
     // Initialize the 37-node board topology
     function _initializeBoard() private {
-        // Row 0 (Crown top) - positions 0-1
         adjacentNodes[0] = [1, 5];
         adjacentNodes[1] = [0, 6];
-        
-        // Row 1 - positions 2-6
         adjacentNodes[2] = [3, 7];
         adjacentNodes[3] = [2, 4, 7, 8];
         adjacentNodes[4] = [3, 5, 8, 9];
         adjacentNodes[5] = [0, 4, 6, 9, 10];
         adjacentNodes[6] = [1, 5, 10];
-        
-        // Row 2 (middle) - positions 7-11
         adjacentNodes[7] = [2, 3, 8, 12];
         adjacentNodes[8] = [3, 4, 7, 9, 12, 13];
         adjacentNodes[9] = [4, 5, 8, 10, 13, 14];
         adjacentNodes[10] = [5, 6, 9, 14];
-        
-        // Row 3 - positions 12-16
         adjacentNodes[12] = [7, 8, 13, 17];
         adjacentNodes[13] = [8, 9, 12, 14, 17, 18];
         adjacentNodes[14] = [9, 10, 13, 18, 19];
-        
-        // Row 4 - positions 17-21
         adjacentNodes[17] = [12, 13, 18, 22];
         adjacentNodes[18] = [13, 14, 17, 19, 22, 23];
         adjacentNodes[19] = [14, 18, 23];
-        
-        // Row 5 - positions 22-26
         adjacentNodes[22] = [17, 18, 23, 27];
         adjacentNodes[23] = [18, 19, 22, 24, 27, 28];
         adjacentNodes[24] = [23, 28];
-        
-        // Row 6 - positions 27-31
         adjacentNodes[27] = [22, 23, 28, 32];
         adjacentNodes[28] = [23, 24, 27, 29, 32, 33];
         adjacentNodes[29] = [28, 30, 33, 34];
         adjacentNodes[30] = [29, 31, 34, 35];
         adjacentNodes[31] = [30, 35];
-        
-        // Row 7 (Crown bottom) - positions 32-36
         adjacentNodes[32] = [27, 28, 33];
         adjacentNodes[33] = [28, 29, 32, 34];
         adjacentNodes[34] = [29, 30, 33, 35, 36];
@@ -141,8 +152,10 @@ contract SholoGuti {
         room.betAmount = betAmount;
         room.status = GameStatus.Waiting;
         room.botDifficulty = BotDifficulty.None;
+        room.payoutCompleted = false;
         
         waitingRooms.push(roomId);
+        playerRooms[msg.sender].push(roomId);
         
         emit RoomCreated(roomId, RoomType.Friends, msg.sender, betAmount);
         return roomId;
@@ -161,8 +174,10 @@ contract SholoGuti {
         room.betAmount = betAmount;
         room.status = GameStatus.Waiting;
         room.botDifficulty = BotDifficulty.None;
+        room.payoutCompleted = false;
         
         waitingRooms.push(roomId);
+        playerRooms[msg.sender].push(roomId);
         
         emit RoomCreated(roomId, RoomType.Random, msg.sender, betAmount);
         return roomId;
@@ -171,7 +186,7 @@ contract SholoGuti {
     // Join a friends room by ID
     function joinFriendsRoom(string memory roomId) external payable {
         Room storage room = rooms[roomId];
-        require(room.status == GameStatus.Waiting, "Room not available - game already started or completed");
+        require(room.status == GameStatus.Waiting, "Room not available");
         require(room.roomType == RoomType.Friends, "Not a friends room");
         require(!room.player2.hasJoined, "Room is full");
         require(room.player1.hasJoined, "Invalid room");
@@ -179,6 +194,7 @@ contract SholoGuti {
         require(msg.value == room.betAmount, "Incorrect bet amount");
         
         room.player2 = Player(msg.sender, _getOrInitElo(msg.sender), true);
+        playerRooms[msg.sender].push(roomId);
         _startGame(roomId);
     }
     
@@ -186,7 +202,6 @@ contract SholoGuti {
     function joinRandomRoom() external payable {
         uint256 playerEloValue = _getOrInitElo(msg.sender);
         
-        // Find a suitable room
         for (uint i = 0; i < waitingRooms.length; i++) {
             string memory roomId = waitingRooms[i];
             Room storage room = rooms[roomId];
@@ -203,6 +218,7 @@ contract SholoGuti {
                 
                 if (eloDiff <= ELO_RANGE) {
                     room.player2 = Player(msg.sender, playerEloValue, true);
+                    playerRooms[msg.sender].push(roomId);
                     _startGame(roomId);
                     return;
                 }
@@ -222,10 +238,12 @@ contract SholoGuti {
         room.roomId = roomId;
         room.roomType = RoomType.Friends;
         room.player1 = Player(msg.sender, _getOrInitElo(msg.sender), true);
-        room.player2 = Player(address(this), 400, true); // Bot as player 2
+        room.player2 = Player(address(this), 400, true);
         room.betAmount = 0;
         room.botDifficulty = difficulty;
+        room.payoutCompleted = true;
         
+        playerRooms[msg.sender].push(roomId);
         _startGame(roomId);
         
         emit RoomCreated(roomId, RoomType.Friends, msg.sender, 0);
@@ -250,71 +268,59 @@ contract SholoGuti {
     function _initializeGameBoard(string memory roomId) private {
         Room storage room = rooms[roomId];
         
-        // Player 1 pieces (bottom): positions 22-31 + crown (32, 33)
         room.board[22] = 1; room.board[23] = 1; room.board[24] = 1;
         room.board[27] = 1; room.board[28] = 1; room.board[29] = 1;
         room.board[30] = 1; room.board[31] = 1;
         room.board[32] = 1; room.board[33] = 1;
         
-        // Player 2 pieces (top): positions 2-6 + 7-11 (partial) + crown (0, 1)
         room.board[0] = 2; room.board[1] = 2;
         room.board[2] = 2; room.board[3] = 2; room.board[4] = 2;
         room.board[5] = 2; room.board[6] = 2;
         room.board[7] = 2; room.board[8] = 2; room.board[9] = 2;
         room.board[10] = 2;
-        
-        // Middle row empty (11, 12, 13, 14, 15, 16)
-        // All other positions are 0 (empty)
     }
     
-    // Make a move
+    // Make a move - automatically handles timeout
     function makeMove(string memory roomId, uint8 from, uint8 to) external {
         Room storage room = rooms[roomId];
-        require(room.status == GameStatus.Active, "Game not active");
         
-        // Check timeout and auto-forfeit if needed
-        if (block.timestamp > room.lastMoveTime + GAME_TIMEOUT) {
+        // Auto-forfeit on timeout
+        if (room.status == GameStatus.Active && block.timestamp > room.lastMoveTime + GAME_TIMEOUT) {
             address winner = (room.currentTurn == room.player1.playerAddress) ? 
                 room.player2.playerAddress : room.player1.playerAddress;
             _endGame(roomId, winner, GameStatus.Timeout);
-            revert("Previous player timed out - game ended");
+            revert("Previous player timed out - game ended automatically");
         }
         
+        require(room.status == GameStatus.Active, "Game not active");
         require(msg.sender == room.currentTurn, "Not your turn");
         
         int8 piece = room.board[from];
         require(piece != 0, "No piece at from position");
         
-        // Check ownership
         if (msg.sender == room.player1.playerAddress) {
             require(piece == 1, "Not your piece");
         } else {
             require(piece == 2, "Not your piece");
         }
         
-        // Validate move
         (bool isValid, MoveType moveType) = _validateMove(roomId, from, to, piece);
         require(isValid, "Invalid move");
         
-        // Check forced capture rule
         bool captureAvailable = _hasCaptureMove(roomId, piece);
         if (captureAvailable) {
             require(moveType == MoveType.Capture, "Must capture when available");
         }
         
-        // Execute move
         _executeMove(roomId, from, to, moveType);
         
-        // Record move
         gameHistory[roomId].push(Move(from, to, moveType, block.timestamp));
         room.moveCount++;
         
         if (moveType == MoveType.Capture) {
             room.movesWithoutCapture = 0;
             
-            // Check for chain capture
             if (_hasChainCapture(roomId, to, piece)) {
-                // Same player continues
                 emit MoveMade(roomId, msg.sender, from, to, moveType);
                 return;
             }
@@ -322,27 +328,22 @@ contract SholoGuti {
             room.movesWithoutCapture++;
         }
         
-        // Check win conditions
         if (_checkWinCondition(roomId)) {
-            return; // Game ended
+            return;
         }
         
-        // Check 69-move rule
         if (room.movesWithoutCapture >= MOVE_LIMIT_FOR_DRAW) {
             _handleDrawByMoveLimit(roomId);
             return;
         }
         
-        // Switch turn
         room.currentTurn = (room.currentTurn == room.player1.playerAddress) ? 
             room.player2.playerAddress : room.player1.playerAddress;
         room.lastMoveTime = block.timestamp;
         
         emit MoveMade(roomId, msg.sender, from, to, moveType);
         
-        // If bot's turn, make bot move
-        if (room.botDifficulty != BotDifficulty.None && 
-            room.currentTurn == address(this)) {
+        if (room.botDifficulty != BotDifficulty.None && room.currentTurn == address(this)) {
             _makeBotMove(roomId);
         }
     }
@@ -352,12 +353,10 @@ contract SholoGuti {
         private view returns (bool, MoveType) {
         Room storage room = rooms[roomId];
         
-        // Check if 'to' is empty
         if (room.board[to] != 0) {
             return (false, MoveType.Normal);
         }
         
-        // Check if positions are adjacent
         bool isAdjacent = false;
         uint8[] memory adjacent = adjacentNodes[from];
         for (uint i = 0; i < adjacent.length; i++) {
@@ -371,17 +370,14 @@ contract SholoGuti {
             return (true, MoveType.Normal);
         }
         
-        // Check for capture move (jump over opponent piece)
         int8 opponentPiece = (piece == 1) ? int8(2) : int8(1);
         
         for (uint i = 0; i < adjacent.length; i++) {
             uint8 middle = adjacent[i];
             if (room.board[middle] == opponentPiece) {
-                // Check if 'to' is on the opposite side of middle from 'from'
                 uint8[] memory middleAdjacent = adjacentNodes[middle];
                 for (uint j = 0; j < middleAdjacent.length; j++) {
                     if (middleAdjacent[j] == to && middleAdjacent[j] != from) {
-                        // Check alignment (from-middle-to must be in a line)
                         if (_isInLine(from, middle, to)) {
                             return (true, MoveType.Capture);
                         }
@@ -393,14 +389,10 @@ contract SholoGuti {
         return (false, MoveType.Normal);
     }
     
-    // Check if three positions are in a straight line
-    function _isInLine(uint8 from, uint8 middle, uint8 to) private pure returns (bool) {
-        // This is a simplified check - in a real implementation, 
-        // you'd need to check the actual board geometry
-        return true; // Placeholder
+    function _isInLine(uint8, uint8, uint8) private pure returns (bool) {
+        return true;
     }
     
-    // Execute the move
     function _executeMove(string memory roomId, uint8 from, uint8 to, MoveType moveType) private {
         Room storage room = rooms[roomId];
         int8 piece = room.board[from];
@@ -409,19 +401,15 @@ contract SholoGuti {
         room.board[from] = 0;
         
         if (moveType == MoveType.Capture) {
-            // Remove captured piece (middle position)
             uint8 middle = _findMiddlePosition(from, to);
             room.board[middle] = 0;
         }
     }
     
-    // Find the middle position between from and to for capture
     function _findMiddlePosition(uint8 from, uint8 to) private pure returns (uint8) {
-        // Simplified - calculate based on position arithmetic
         return uint8((uint16(from) + uint16(to)) / 2);
     }
     
-    // Check if player has any capture move available
     function _hasCaptureMove(string memory roomId, int8 piece) private view returns (bool) {
         Room storage room = rooms[roomId];
         
@@ -429,7 +417,6 @@ contract SholoGuti {
             if (room.board[pos] == piece) {
                 uint8[] memory adjacent = adjacentNodes[pos];
                 for (uint i = 0; i < adjacent.length; i++) {
-                    // Check all possible destinations from this piece
                     (bool isValid, MoveType moveType) = _validateMove(roomId, pos, adjacent[i], piece);
                     if (isValid && moveType == MoveType.Capture) {
                         return true;
@@ -440,7 +427,6 @@ contract SholoGuti {
         return false;
     }
     
-    // Check if piece at position can make another capture
     function _hasChainCapture(string memory roomId, uint8 pos, int8 piece) private view returns (bool) {
         Room storage room = rooms[roomId];
         
@@ -454,19 +440,11 @@ contract SholoGuti {
         return false;
     }
     
-    // Check win conditions
     function _checkWinCondition(string memory roomId) private returns (bool) {
         Room storage room = rooms[roomId];
         
-        uint8 player1Pieces = 0;
-        uint8 player2Pieces = 0;
+        (uint8 player1Pieces, uint8 player2Pieces) = _countPieces(roomId);
         
-        for (uint8 i = 0; i < 37; i++) {
-            if (room.board[i] == 1) player1Pieces++;
-            if (room.board[i] == 2) player2Pieces++;
-        }
-        
-        // Check if all pieces captured
         if (player1Pieces == 0) {
             _endGame(roomId, room.player2.playerAddress, GameStatus.Completed);
             return true;
@@ -476,7 +454,6 @@ contract SholoGuti {
             return true;
         }
         
-        // Check for blockade (no legal moves)
         int8 currentPiece = (room.currentTurn == room.player1.playerAddress) ? int8(1) : int8(2);
         if (!_hasLegalMove(roomId, currentPiece)) {
             address winner = (room.currentTurn == room.player1.playerAddress) ? 
@@ -488,7 +465,6 @@ contract SholoGuti {
         return false;
     }
     
-    // Check if player has any legal move
     function _hasLegalMove(string memory roomId, int8 piece) private view returns (bool) {
         Room storage room = rooms[roomId];
         
@@ -506,10 +482,25 @@ contract SholoGuti {
         return false;
     }
     
-    // Handle draw by 69-move rule
     function _handleDrawByMoveLimit(string memory roomId) private {
         Room storage room = rooms[roomId];
         
+        (uint8 player1Pieces, uint8 player2Pieces) = _countPieces(roomId);
+        
+        address winner;
+        if (player1Pieces > player2Pieces) {
+            winner = room.player1.playerAddress;
+        } else if (player2Pieces > player1Pieces) {
+            winner = room.player2.playerAddress;
+        } else {
+            winner = address(0);
+        }
+        
+        _endGame(roomId, winner, GameStatus.Completed);
+    }
+    
+    function _countPieces(string memory roomId) private view returns (uint8, uint8) {
+        Room storage room = rooms[roomId];
         uint8 player1Pieces = 0;
         uint8 player2Pieces = 0;
         
@@ -518,16 +509,7 @@ contract SholoGuti {
             if (room.board[i] == 2) player2Pieces++;
         }
         
-        address winner;
-        if (player1Pieces > player2Pieces) {
-            winner = room.player1.playerAddress;
-        } else if (player2Pieces > player1Pieces) {
-            winner = room.player2.playerAddress;
-        } else {
-            winner = address(0); // Draw
-        }
-        
-        _endGame(roomId, winner, GameStatus.Completed);
+        return (player1Pieces, player2Pieces);
     }
     
     // Offer a draw
@@ -565,35 +547,30 @@ contract SholoGuti {
             room.player2.playerAddress : room.player1.playerAddress;
         
         _endGame(roomId, winner, GameStatus.Resigned);
-        emit GameResigned(roomId, msg.sender);
-    }
-    
-    // Claim timeout victory (if opponent hasn't moved within timeout period)
-    function claimTimeoutVictory(string memory roomId) external {
-        Room storage room = rooms[roomId];
-        require(room.status == GameStatus.Active, "Game not active");
-        require(msg.sender == room.player1.playerAddress || msg.sender == room.player2.playerAddress, "Not a player");
-        require(block.timestamp > room.lastMoveTime + GAME_TIMEOUT, "Timeout period not reached");
-        require(msg.sender != room.currentTurn, "Cannot claim timeout on your own turn");
-        
-        _endGame(roomId, msg.sender, GameStatus.Timeout);
+        emit GameResigned(roomId, msg.sender, winner);
     }
     
     // End the game with automatic payout
     function _endGame(string memory roomId, address winner, GameStatus status) private {
         Room storage room = rooms[roomId];
+        require(!room.payoutCompleted, "Payout already completed");
+        
         room.status = status;
         room.winner = winner;
+        room.payoutCompleted = true;
+        totalGamesPlayed++;
         
-        // Update ELO only for non-bot games and only on actual game completion
-        if (room.botDifficulty == BotDifficulty.None && 
-            room.player1.hasJoined && 
-            room.player2.hasJoined) {
-            _updateElo(roomId, winner);
+        uint256 newElo1 = room.player1.elo;
+        uint256 newElo2 = room.player2.elo;
+        
+        // Update ELO only for non-bot games
+        if (room.botDifficulty == BotDifficulty.None && room.player1.hasJoined && room.player2.hasJoined) {
+            (newElo1, newElo2) = _updateElo(roomId, winner);
         }
         
         // Handle automatic payouts
         if (room.betAmount > 0 && room.player2.hasJoined) {
+            totalBetsProcessed += room.betAmount * 2;
             uint256 totalPot = room.betAmount * 2;
             uint256 platformFee = (totalPot * PLATFORM_FEE_PERCENT) / 100;
             uint256 netPot = totalPot - platformFee;
@@ -601,56 +578,59 @@ contract SholoGuti {
             platformBalance += platformFee;
             
             if (winner != address(0)) {
-                // Winner takes all (minus platform fee)
                 payable(winner).transfer(netPot);
+                emit PayoutProcessed(roomId, winner, netPot);
             } else {
-                // Draw - split pot equally (minus platform fee)
                 uint256 splitAmount = netPot / 2;
                 payable(room.player1.playerAddress).transfer(splitAmount);
                 payable(room.player2.playerAddress).transfer(splitAmount);
+                emit PayoutProcessed(roomId, room.player1.playerAddress, splitAmount);
+                emit PayoutProcessed(roomId, room.player2.playerAddress, splitAmount);
             }
         } else if (room.betAmount > 0 && !room.player2.hasJoined) {
-            // Refund player1 if game never started
             payable(room.player1.playerAddress).transfer(room.betAmount);
+            emit PayoutProcessed(roomId, room.player1.playerAddress, room.betAmount);
         }
         
         _removeFromActiveRooms(roomId);
-        emit GameCompleted(roomId, winner, status);
+        emit GameCompleted(roomId, winner, status, newElo1, newElo2);
     }
     
-    // Update ELO ratings
-    function _updateElo(string memory roomId, address winner) private {
+    // Update ELO ratings with proper draw handling
+    function _updateElo(string memory roomId, address winner) private returns (uint256, uint256) {
         Room storage room = rooms[roomId];
         
         uint256 elo1 = room.player1.elo;
         uint256 elo2 = room.player2.elo;
         
-        // Calculate expected scores
         int256 diff1 = int256(elo1) - int256(elo2);
         uint256 expected1 = _calculateExpectedScore(diff1);
-        uint256 expected2 = 1000 - expected1; // Expected scores sum to 1000 (representing 1.0)
+        uint256 expected2 = 1000 - expected1;
         
         uint256 score1;
         uint256 score2;
         
         if (winner == room.player1.playerAddress) {
-            score1 = 1000; // Win
-            score2 = 0;    // Loss
+            score1 = 1000;
+            score2 = 0;
         } else if (winner == room.player2.playerAddress) {
-            score1 = 0;    // Loss
-            score2 = 1000; // Win
+            score1 = 0;
+            score2 = 1000;
         } else {
-            // Draw - special rule
+            // Draw - lower rated gets +0.5, higher rated gets 0
             if (elo1 < elo2) {
-                score1 = 500; // Lower rated gets +0.5
-                score2 = 0;   // Higher rated gets -0
+                score1 = 500;
+                score2 = 0;
+            } else if (elo2 < elo1) {
+                score1 = 0;
+                score2 = 500;
             } else {
-                score1 = 0;   // Higher rated gets -0
-                score2 = 500; // Lower rated gets +0.5
+                // Equal ELO
+                score1 = 500;
+                score2 = 500;
             }
         }
         
-        // Calculate new ELOs
         int256 change1 = (int256(ELO_K_FACTOR) * (int256(score1) - int256(expected1))) / 1000;
         int256 change2 = (int256(ELO_K_FACTOR) * (int256(score2) - int256(expected2))) / 1000;
         
@@ -660,33 +640,30 @@ contract SholoGuti {
         playerElo[room.player1.playerAddress] = newElo1;
         playerElo[room.player2.playerAddress] = newElo2;
         
-        emit EloUpdated(room.player1.playerAddress, newElo1);
-        emit EloUpdated(room.player2.playerAddress, newElo2);
+        emit EloUpdated(room.player1.playerAddress, elo1, newElo1);
+        emit EloUpdated(room.player2.playerAddress, elo2, newElo2);
+        
+        return (newElo1, newElo2);
     }
     
-    // Calculate expected score (0-1000 representing 0.0-1.0)
     function _calculateExpectedScore(int256 eloDiff) private pure returns (uint256) {
-        // Simplified logistic function: 1 / (1 + 10^(-diff/400))
-        // Returns value from 0-1000
-        if (eloDiff >= 400) return 909; // ~0.909
-        if (eloDiff >= 200) return 760; // ~0.760
-        if (eloDiff >= 100) return 640; // ~0.640
-        if (eloDiff >= 0) return 500;   // 0.500
-        if (eloDiff >= -100) return 360; // ~0.360
-        if (eloDiff >= -200) return 240; // ~0.240
-        return 91; // ~0.091
+        if (eloDiff >= 400) return 909;
+        if (eloDiff >= 200) return 760;
+        if (eloDiff >= 100) return 640;
+        if (eloDiff >= 0) return 500;
+        if (eloDiff >= -100) return 360;
+        if (eloDiff >= -200) return 240;
+        return 91;
     }
     
     // Bot move (simplified AI)
     function _makeBotMove(string memory roomId) private {
         Room storage room = rooms[roomId];
         
-        // Find all valid moves for bot (piece = 2)
         uint8 bestFrom = 0;
         uint8 bestTo = 0;
         bool foundMove = false;
         
-        // Prioritize captures
         for (uint8 pos = 0; pos < 37; pos++) {
             if (room.board[pos] == 2) {
                 uint8[] memory adjacent = adjacentNodes[pos];
@@ -703,7 +680,6 @@ contract SholoGuti {
             }
         }
         
-        // If no capture, make normal move
         if (!foundMove) {
             for (uint8 pos = 0; pos < 37; pos++) {
                 if (room.board[pos] == 2) {
@@ -723,8 +699,6 @@ contract SholoGuti {
         }
         
         if (foundMove) {
-            // Execute bot move (recursive call to makeMove wouldn't work due to msg.sender)
-            // So we simulate it here
             (bool isValid, MoveType moveType) = _validateMove(roomId, bestFrom, bestTo, 2);
             _executeMove(roomId, bestFrom, bestTo, moveType);
             gameHistory[roomId].push(Move(bestFrom, bestTo, moveType, block.timestamp));
@@ -736,7 +710,6 @@ contract SholoGuti {
             
             emit MoveMade(roomId, address(this), bestFrom, bestTo, moveType);
             
-            // Check win conditions
             if (!_checkWinCondition(roomId)) {
                 room.currentTurn = room.player1.playerAddress;
                 room.lastMoveTime = block.timestamp;
@@ -744,7 +717,6 @@ contract SholoGuti {
         }
     }
     
-    // Get or initialize player ELO
     function _getOrInitElo(address player) private returns (uint256) {
         if (!hasPlayed[player]) {
             playerElo[player] = STARTING_ELO;
@@ -753,17 +725,14 @@ contract SholoGuti {
         return playerElo[player];
     }
     
-    // Generate unique room ID
     function _generateRoomId() private view returns (string memory) {
         return string(abi.encodePacked(
-            "room_",
+            "R",
             _uint2str(block.timestamp),
-            "_",
-            _uint2str(uint256(uint160(msg.sender)))
+            _uint2str(uint256(uint160(msg.sender)) % 10000)
         ));
     }
     
-    // Helper: uint to string
     function _uint2str(uint256 _i) private pure returns (string memory) {
         if (_i == 0) return "0";
         uint256 j = _i;
@@ -784,7 +753,6 @@ contract SholoGuti {
         return string(bstr);
     }
     
-    // Remove from waiting rooms
     function _removeFromWaitingRooms(string memory roomId) private {
         for (uint i = 0; i < waitingRooms.length; i++) {
             if (keccak256(bytes(waitingRooms[i])) == keccak256(bytes(roomId))) {
@@ -795,7 +763,6 @@ contract SholoGuti {
         }
     }
     
-    // Remove from active rooms
     function _removeFromActiveRooms(string memory roomId) private {
         for (uint i = 0; i < activeRooms.length; i++) {
             if (keccak256(bytes(activeRooms[i])) == keccak256(bytes(roomId))) {
@@ -806,8 +773,10 @@ contract SholoGuti {
         }
     }
     
-    // Public view functions for frontend integration
+    // ========== FRONTEND DATA ACCESS FUNCTIONS ==========
+    
     function getPlayerElo(address player) external view returns (uint256) {
+        if (!hasPlayed[player]) return STARTING_ELO;
         return playerElo[player];
     }
     
@@ -833,45 +802,36 @@ contract SholoGuti {
     }
     
     // Get complete room details for frontend
-    function getRoomDetails(string memory roomId) external view returns (
-        string memory,
-        RoomType,
-        address,
-        address,
-        uint256,
-        uint256,
-        GameStatus,
-        address,
-        uint256,
-        uint256,
-        address,
-        BotDifficulty
-    ) {
+    function getRoomDetails(string memory roomId) external view returns (RoomData memory) {
         Room storage room = rooms[roomId];
-        return (
-            room.roomId,
-            room.roomType,
-            room.player1.playerAddress,
-            room.player2.playerAddress,
-            room.player1.elo,
-            room.player2.elo,
-            room.status,
-            room.currentTurn,
-            room.moveCount,
-            room.betAmount,
-            room.winner,
-            room.botDifficulty
-        );
+        (uint8 p1Count, uint8 p2Count) = _countPieces(roomId);
+        
+        return RoomData({
+            roomId: room.roomId,
+            roomType: room.roomType,
+            player1: room.player1.playerAddress,
+            player2: room.player2.playerAddress,
+            player1Elo: room.player1.elo,
+            player2Elo: room.player2.elo,
+            status: room.status,
+            currentTurn: room.currentTurn,
+            moveCount: room.moveCount,
+            betAmount: room.betAmount,
+            winner: room.winner,
+            drawOfferedBy1: room.drawOfferedBy1,
+            drawOfferedBy2: room.drawOfferedBy2,
+            botDifficulty: room.botDifficulty,
+            player1PieceCount: p1Count,
+            player2PieceCount: p2Count
+        });
     }
     
-    // Check if timeout has occurred
     function isGameTimedOut(string memory roomId) external view returns (bool) {
         Room storage room = rooms[roomId];
         if (room.status != GameStatus.Active) return false;
         return block.timestamp > room.lastMoveTime + GAME_TIMEOUT;
     }
     
-    // Get time remaining for current turn
     function getTimeRemaining(string memory roomId) external view returns (uint256) {
         Room storage room = rooms[roomId];
         if (room.status != GameStatus.Active) return 0;
@@ -880,7 +840,6 @@ contract SholoGuti {
         return deadline - block.timestamp;
     }
     
-    // Get available rooms for matchmaking
     function getAvailableRoomsForPlayer(address player) external view returns (string[] memory) {
         uint256 playerEloValue = playerElo[player];
         if (playerEloValue == 0) playerEloValue = STARTING_ELO;
@@ -924,17 +883,53 @@ contract SholoGuti {
         return availableRooms;
     }
     
-    // Get platform statistics
+    function getPlayerRooms(address player) external view returns (string[] memory) {
+        return playerRooms[player];
+    }
+    
     function getPlatformStats() external view returns (
         uint256 totalPlatformFees,
         uint256 activeGamesCount,
-        uint256 waitingGamesCount
+        uint256 waitingGamesCount,
+        uint256 totalGames,
+        uint256 totalBets
     ) {
         return (
             platformBalance,
             activeRooms.length,
-            waitingRooms.length
+            waitingRooms.length,
+            totalGamesPlayed,
+            totalBetsProcessed
         );
+    }
+    
+    // Batch fetch multiple room details for efficiency
+    function getMultipleRoomDetails(string[] memory roomIds) external view returns (RoomData[] memory) {
+        RoomData[] memory roomsData = new RoomData[](roomIds.length);
+        for (uint i = 0; i < roomIds.length; i++) {
+            Room storage room = rooms[roomIds[i]];
+            (uint8 p1Count, uint8 p2Count) = _countPieces(roomIds[i]);
+            
+            roomsData[i] = RoomData({
+                roomId: room.roomId,
+                roomType: room.roomType,
+                player1: room.player1.playerAddress,
+                player2: room.player2.playerAddress,
+                player1Elo: room.player1.elo,
+                player2Elo: room.player2.elo,
+                status: room.status,
+                currentTurn: room.currentTurn,
+                moveCount: room.moveCount,
+                betAmount: room.betAmount,
+                winner: room.winner,
+                drawOfferedBy1: room.drawOfferedBy1,
+                drawOfferedBy2: room.drawOfferedBy2,
+                botDifficulty: room.botDifficulty,
+                player1PieceCount: p1Count,
+                player2PieceCount: p2Count
+            });
+        }
+        return roomsData;
     }
     
     // Owner functions
@@ -946,26 +941,16 @@ contract SholoGuti {
         payable(owner).transfer(amount);
     }
     
-    // Recover accidentally sent ERC20 tokens
     function recoverERC20(address tokenAddress, uint256 amount) external {
         require(msg.sender == owner, "Only owner");
         require(tokenAddress != address(0), "Invalid token address");
         
-        // Using low-level call to avoid importing IERC20
         (bool success, bytes memory data) = tokenAddress.call(
             abi.encodeWithSignature("transfer(address,uint256)", owner, amount)
         );
         require(success && (data.length == 0 || abi.decode(data, (bool))), "Token transfer failed");
     }
     
-    // Emergency ETH recovery (only for accidentally sent ETH, not bet amounts)
-    function recoverETH(uint256 amount) external {
-        require(msg.sender == owner, "Only owner");
-        require(amount <= address(this).balance, "Insufficient balance");
-        payable(owner).transfer(amount);
-    }
-    
-    // Transfer ownership
     function transferOwnership(address newOwner) external {
         require(msg.sender == owner, "Only owner");
         require(newOwner != address(0), "Invalid new owner");
