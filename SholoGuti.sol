@@ -171,9 +171,10 @@ contract SholoGuti {
     // Join a friends room by ID
     function joinFriendsRoom(string memory roomId) external payable {
         Room storage room = rooms[roomId];
-        require(room.status == GameStatus.Waiting, "Room not available");
+        require(room.status == GameStatus.Waiting, "Room not available - game already started or completed");
         require(room.roomType == RoomType.Friends, "Not a friends room");
         require(!room.player2.hasJoined, "Room is full");
+        require(room.player1.hasJoined, "Invalid room");
         require(msg.sender != room.player1.playerAddress, "Cannot play against yourself");
         require(msg.value == room.betAmount, "Incorrect bet amount");
         
@@ -270,8 +271,16 @@ contract SholoGuti {
     function makeMove(string memory roomId, uint8 from, uint8 to) external {
         Room storage room = rooms[roomId];
         require(room.status == GameStatus.Active, "Game not active");
+        
+        // Check timeout and auto-forfeit if needed
+        if (block.timestamp > room.lastMoveTime + GAME_TIMEOUT) {
+            address winner = (room.currentTurn == room.player1.playerAddress) ? 
+                room.player2.playerAddress : room.player1.playerAddress;
+            _endGame(roomId, winner, GameStatus.Timeout);
+            revert("Previous player timed out - game ended");
+        }
+        
         require(msg.sender == room.currentTurn, "Not your turn");
-        require(block.timestamp <= room.lastMoveTime + GAME_TIMEOUT, "Game timed out");
         
         int8 piece = room.board[from];
         require(piece != 0, "No piece at from position");
@@ -559,32 +568,50 @@ contract SholoGuti {
         emit GameResigned(roomId, msg.sender);
     }
     
-    // End the game
+    // Claim timeout victory (if opponent hasn't moved within timeout period)
+    function claimTimeoutVictory(string memory roomId) external {
+        Room storage room = rooms[roomId];
+        require(room.status == GameStatus.Active, "Game not active");
+        require(msg.sender == room.player1.playerAddress || msg.sender == room.player2.playerAddress, "Not a player");
+        require(block.timestamp > room.lastMoveTime + GAME_TIMEOUT, "Timeout period not reached");
+        require(msg.sender != room.currentTurn, "Cannot claim timeout on your own turn");
+        
+        _endGame(roomId, msg.sender, GameStatus.Timeout);
+    }
+    
+    // End the game with automatic payout
     function _endGame(string memory roomId, address winner, GameStatus status) private {
         Room storage room = rooms[roomId];
         room.status = status;
         room.winner = winner;
         
-        // Update ELO (skip for bot games)
-        if (room.botDifficulty == BotDifficulty.None) {
+        // Update ELO only for non-bot games and only on actual game completion
+        if (room.botDifficulty == BotDifficulty.None && 
+            room.player1.hasJoined && 
+            room.player2.hasJoined) {
             _updateElo(roomId, winner);
         }
         
-        // Handle payouts
-        if (room.betAmount > 0) {
-            uint256 platformFee = (room.betAmount * 2 * PLATFORM_FEE_PERCENT) / 100;
-            uint256 payout = (room.betAmount * 2) - platformFee;
+        // Handle automatic payouts
+        if (room.betAmount > 0 && room.player2.hasJoined) {
+            uint256 totalPot = room.betAmount * 2;
+            uint256 platformFee = (totalPot * PLATFORM_FEE_PERCENT) / 100;
+            uint256 netPot = totalPot - platformFee;
             
             platformBalance += platformFee;
             
             if (winner != address(0)) {
-                payable(winner).transfer(payout);
+                // Winner takes all (minus platform fee)
+                payable(winner).transfer(netPot);
             } else {
-                // Draw - refund both players minus platform fee
-                uint256 refund = room.betAmount - (platformFee / 2);
-                payable(room.player1.playerAddress).transfer(refund);
-                payable(room.player2.playerAddress).transfer(refund);
+                // Draw - split pot equally (minus platform fee)
+                uint256 splitAmount = netPot / 2;
+                payable(room.player1.playerAddress).transfer(splitAmount);
+                payable(room.player2.playerAddress).transfer(splitAmount);
             }
+        } else if (room.betAmount > 0 && !room.player2.hasJoined) {
+            // Refund player1 if game never started
+            payable(room.player1.playerAddress).transfer(room.betAmount);
         }
         
         _removeFromActiveRooms(roomId);
@@ -779,7 +806,7 @@ contract SholoGuti {
         }
     }
     
-    // Public view functions
+    // Public view functions for frontend integration
     function getPlayerElo(address player) external view returns (uint256) {
         return playerElo[player];
     }
@@ -805,11 +832,143 @@ contract SholoGuti {
         return board;
     }
     
+    // Get complete room details for frontend
+    function getRoomDetails(string memory roomId) external view returns (
+        string memory,
+        RoomType,
+        address,
+        address,
+        uint256,
+        uint256,
+        GameStatus,
+        address,
+        uint256,
+        uint256,
+        address,
+        BotDifficulty
+    ) {
+        Room storage room = rooms[roomId];
+        return (
+            room.roomId,
+            room.roomType,
+            room.player1.playerAddress,
+            room.player2.playerAddress,
+            room.player1.elo,
+            room.player2.elo,
+            room.status,
+            room.currentTurn,
+            room.moveCount,
+            room.betAmount,
+            room.winner,
+            room.botDifficulty
+        );
+    }
+    
+    // Check if timeout has occurred
+    function isGameTimedOut(string memory roomId) external view returns (bool) {
+        Room storage room = rooms[roomId];
+        if (room.status != GameStatus.Active) return false;
+        return block.timestamp > room.lastMoveTime + GAME_TIMEOUT;
+    }
+    
+    // Get time remaining for current turn
+    function getTimeRemaining(string memory roomId) external view returns (uint256) {
+        Room storage room = rooms[roomId];
+        if (room.status != GameStatus.Active) return 0;
+        uint256 deadline = room.lastMoveTime + GAME_TIMEOUT;
+        if (block.timestamp >= deadline) return 0;
+        return deadline - block.timestamp;
+    }
+    
+    // Get available rooms for matchmaking
+    function getAvailableRoomsForPlayer(address player) external view returns (string[] memory) {
+        uint256 playerEloValue = playerElo[player];
+        if (playerEloValue == 0) playerEloValue = STARTING_ELO;
+        
+        uint256 count = 0;
+        for (uint i = 0; i < waitingRooms.length; i++) {
+            Room storage room = rooms[waitingRooms[i]];
+            if (room.roomType == RoomType.Random && 
+                room.status == GameStatus.Waiting &&
+                room.player1.playerAddress != player) {
+                
+                uint256 eloDiff = playerEloValue > room.player1.elo ? 
+                    playerEloValue - room.player1.elo : 
+                    room.player1.elo - playerEloValue;
+                
+                if (eloDiff <= ELO_RANGE) {
+                    count++;
+                }
+            }
+        }
+        
+        string[] memory availableRooms = new string[](count);
+        uint256 index = 0;
+        for (uint i = 0; i < waitingRooms.length; i++) {
+            Room storage room = rooms[waitingRooms[i]];
+            if (room.roomType == RoomType.Random && 
+                room.status == GameStatus.Waiting &&
+                room.player1.playerAddress != player) {
+                
+                uint256 eloDiff = playerEloValue > room.player1.elo ? 
+                    playerEloValue - room.player1.elo : 
+                    room.player1.elo - playerEloValue;
+                
+                if (eloDiff <= ELO_RANGE) {
+                    availableRooms[index] = waitingRooms[i];
+                    index++;
+                }
+            }
+        }
+        
+        return availableRooms;
+    }
+    
+    // Get platform statistics
+    function getPlatformStats() external view returns (
+        uint256 totalPlatformFees,
+        uint256 activeGamesCount,
+        uint256 waitingGamesCount
+    ) {
+        return (
+            platformBalance,
+            activeRooms.length,
+            waitingRooms.length
+        );
+    }
+    
     // Owner functions
     function withdrawPlatformFees() external {
         require(msg.sender == owner, "Only owner");
+        require(platformBalance > 0, "No fees to withdraw");
         uint256 amount = platformBalance;
         platformBalance = 0;
         payable(owner).transfer(amount);
+    }
+    
+    // Recover accidentally sent ERC20 tokens
+    function recoverERC20(address tokenAddress, uint256 amount) external {
+        require(msg.sender == owner, "Only owner");
+        require(tokenAddress != address(0), "Invalid token address");
+        
+        // Using low-level call to avoid importing IERC20
+        (bool success, bytes memory data) = tokenAddress.call(
+            abi.encodeWithSignature("transfer(address,uint256)", owner, amount)
+        );
+        require(success && (data.length == 0 || abi.decode(data, (bool))), "Token transfer failed");
+    }
+    
+    // Emergency ETH recovery (only for accidentally sent ETH, not bet amounts)
+    function recoverETH(uint256 amount) external {
+        require(msg.sender == owner, "Only owner");
+        require(amount <= address(this).balance, "Insufficient balance");
+        payable(owner).transfer(amount);
+    }
+    
+    // Transfer ownership
+    function transferOwnership(address newOwner) external {
+        require(msg.sender == owner, "Only owner");
+        require(newOwner != address(0), "Invalid new owner");
+        owner = newOwner;
     }
 }
