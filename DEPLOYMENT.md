@@ -9,29 +9,29 @@
 ## Deployed Contract Addresses
 
 ### MainHub (Central Coordinator)
-**Address**: `0x6d413385B0383aaB3F69642c7d25dC90414f5f2c`
+**Address**: `0x145C788562F44bD093f573E398fcB40AB50241CF`
 - Manages player ELO ratings
 - Handles platform fees and payouts
 - Coordinates all game mode contracts
-- [View on Explorer](https://sepolia.basescan.org/address/0x6d413385B0383aaB3F69642c7d25dC90414f5f2c)
+- [View on Explorer](https://sepolia.basescan.org/address/0x145C788562F44bD093f573E398fcB40AB50241CF)
 
 ### RandomMultiplayer (ELO-based Matchmaking)
-**Address**: `0xC0aA4c3b53eaE5128a70f6B24A50bcE392A75db2`
+**Address**: `0xB78D15ee835692f58bF4579a1154cd1D978139b5`
 - Random player matchmaking with ELO-based pairing
 - Supports betting with automatic payouts
-- [View on Explorer](https://sepolia.basescan.org/address/0xC0aA4c3b53eaE5128a70f6B24A50bcE392A75db2)
+- [View on Explorer](https://sepolia.basescan.org/address/0xB78D15ee835692f58bF4579a1154cd1D978139b5)
 
 ### RoomWithFriends (Private Rooms)
-**Address**: `0xC3dA3Ef175Fa0C960a8066F63BC944c8E05af873`
+**Address**: `0x9F34Be6dF8c7A1dB9728e662eeE75c60A2DD4833`
 - Create private rooms to play with specific friends
 - Optional betting support
-- [View on Explorer](https://sepolia.basescan.org/address/0xC3dA3Ef175Fa0C960a8066F63BC944c8E05af873)
+- [View on Explorer](https://sepolia.basescan.org/address/0x9F34Be6dF8c7A1dB9728e662eeE75c60A2DD4833)
 
 ### BotMatch (Play Against AI)
-**Address**: `0xd663bF28330f9072037E7894f5021A26FB9Cf53C`
+**Address**: `0xB9B3357c2b999A89728624C9dc13b19D37D83B58`
 - Play against AI with difficulty levels (Easy, Medium, Hard)
 - No betting, practice mode
-- [View on Explorer](https://sepolia.basescan.org/address/0xd663bF28330f9072037E7894f5021A26FB9Cf53C)
+- [View on Explorer](https://sepolia.basescan.org/address/0xB9B3357c2b999A89728624C9dc13b19D37D83B58)
 
 ## Contract Architecture
 
@@ -95,10 +95,10 @@ The contracts follow a modular, Uniswap-style architecture:
 import { ethers } from 'ethers';
 
 // Contract addresses
-const MAINHUB_ADDRESS = '0x6d413385B0383aaB3F69642c7d25dC90414f5f2c';
-const RANDOM_MULTIPLAYER_ADDRESS = '0xC0aA4c3b53eaE5128a70f6B24A50bcE392A75db2';
-const ROOM_WITH_FRIENDS_ADDRESS = '0xC3dA3Ef175Fa0C960a8066F63BC944c8E05af873';
-const BOT_MATCH_ADDRESS = '0xd663bF28330f9072037E7894f5021A26FB9Cf53C';
+const MAINHUB_ADDRESS = '0x145C788562F44bD093f573E398fcB40AB50241CF';
+const RANDOM_MULTIPLAYER_ADDRESS = '0xB78D15ee835692f58bF4579a1154cd1D978139b5';
+const ROOM_WITH_FRIENDS_ADDRESS = '0x9F34Be6dF8c7A1dB9728e662eeE75c60A2DD4833';
+const BOT_MATCH_ADDRESS = '0xB9B3357c2b999A89728624C9dc13b19D37D83B58';
 
 // Connect to contract
 const provider = new ethers.BrowserProvider(window.ethereum);

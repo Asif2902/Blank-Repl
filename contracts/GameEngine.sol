@@ -109,9 +109,29 @@ abstract contract GameEngine {
         room.board[from] = 0;
         
         if (moveType == GameTypes.MoveType.Capture) {
-            uint8 middle = uint8((uint16(from) + uint16(to)) / 2);
+            uint8 middle = _findCapturedPiece(roomId, from, to, piece);
             room.board[middle] = 0;
         }
+    }
+    
+    function _findCapturedPiece(string memory roomId, uint8 from, uint8 to, int8 piece) internal view returns (uint8) {
+        GameTypes.Room storage room = rooms[roomId];
+        int8 opponentPiece = (piece == 1) ? int8(2) : int8(1);
+        
+        uint8[] memory adjacentFrom = adjacentNodes[from];
+        uint8[] memory adjacentTo = adjacentNodes[to];
+        
+        for (uint i = 0; i < adjacentFrom.length; i++) {
+            uint8 candidate = adjacentFrom[i];
+            if (room.board[candidate] == opponentPiece) {
+                for (uint j = 0; j < adjacentTo.length; j++) {
+                    if (adjacentTo[j] == candidate && candidate != from) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+        revert("No opponent piece found in capture path");
     }
     
     function _hasCaptureMove(string memory roomId, int8 piece) internal view returns (bool) {
