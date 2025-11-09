@@ -16,6 +16,7 @@ contract RoomWithFriends is GameEngine {
     
     function createFriendsRoom(uint256 betAmount) external payable returns (string memory) {
         if (msg.value != betAmount) revert GameErrors.IncorrectBetAmount();
+        if (betAmount > 0 && msg.value == 0) revert GameErrors.IncorrectBetAmount();
         
         string memory roomId = GameUtils.generateRoomId(block.timestamp, msg.sender);
         GameTypes.Room storage room = rooms[roomId];

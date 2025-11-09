@@ -14,16 +14,14 @@ contract RandomMultiplayer is GameEngine {
         hub = MainHub(_hub);
     }
     
-    function createRandomRoom(uint256 betAmount) external payable returns (string memory) {
-        if (msg.value != betAmount) revert GameErrors.IncorrectBetAmount();
-        
+    function createRandomRoom() external returns (string memory) {
         string memory roomId = GameUtils.generateRoomId(block.timestamp, msg.sender);
         GameTypes.Room storage room = rooms[roomId];
         
         room.roomId = roomId;
         room.roomType = GameTypes.RoomType.Random;
         room.player1 = GameTypes.Player(msg.sender, hub.getOrInitElo(msg.sender), true);
-        room.betAmount = betAmount;
+        room.betAmount = 0;
         room.status = GameTypes.GameStatus.Waiting;
         room.botDifficulty = GameTypes.BotDifficulty.None;
         room.payoutCompleted = false;
@@ -31,18 +29,17 @@ contract RandomMultiplayer is GameEngine {
         hub.registerRoom(roomId, msg.sender, address(this));
         hub.addToWaitingRooms(roomId);
         
-        emit GameTypes.RoomCreated(roomId, GameTypes.RoomType.Random, msg.sender, betAmount);
+        emit GameTypes.RoomCreated(roomId, GameTypes.RoomType.Random, msg.sender, 0);
         return roomId;
     }
     
-    function joinRandomRoom(string memory roomId) external payable {
+    function joinRandomRoom(string memory roomId) external {
         GameTypes.Room storage room = rooms[roomId];
         if (room.status != GameTypes.GameStatus.Waiting) revert GameErrors.RoomNotAvailable();
         if (room.roomType != GameTypes.RoomType.Random) revert GameErrors.NotFriendsRoom();
         if (room.player2.hasJoined) revert GameErrors.RoomIsFull();
         if (!room.player1.hasJoined) revert GameErrors.InvalidRoom();
         if (msg.sender == room.player1.playerAddress) revert GameErrors.CannotPlayYourself();
-        if (msg.value != room.betAmount) revert GameErrors.IncorrectBetAmount();
         
         uint256 playerEloValue = hub.getOrInitElo(msg.sender);
         uint256 eloDiff = playerEloValue > room.player1.elo ? 
@@ -254,5 +251,5 @@ contract RandomMultiplayer is GameEngine {
         });
     }
     
-    receive() external payable {}
+    
 }
