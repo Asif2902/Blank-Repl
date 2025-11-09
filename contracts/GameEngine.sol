@@ -18,7 +18,7 @@ abstract contract GameEngine {
     }
     
     function _initializeBoard() private {
-        // Main 5x5 grid connections (nodes 0-24)
+        // Main 5x5 grid (nodes 0-24)
         adjacentNodes[0] = [1, 5, 6];
         adjacentNodes[1] = [0, 2, 5, 6, 7];
         adjacentNodes[2] = [1, 3, 6, 7, 8];
@@ -35,47 +35,56 @@ abstract contract GameEngine {
         adjacentNodes[13] = [7, 8, 9, 12, 14, 17, 18, 19];
         adjacentNodes[14] = [8, 9, 13, 18, 19];
         adjacentNodes[15] = [10, 11, 16, 20, 21];
-        adjacentNodes[16] = [10, 11, 12, 15, 17, 20, 21, 22];
-        adjacentNodes[17] = [11, 12, 13, 16, 18, 21, 22, 23];
+        adjacentNodes[16] = [10, 11, 12, 15, 17, 20, 21, 22, 34];
+        adjacentNodes[17] = [11, 12, 13, 16, 18, 21, 22, 23, 35];
         adjacentNodes[18] = [12, 13, 14, 17, 19, 22, 23, 24];
         adjacentNodes[19] = [13, 14, 18, 23, 24];
         adjacentNodes[20] = [15, 16, 21, 25, 26];
-        adjacentNodes[21] = [15, 16, 17, 20, 22, 25, 26, 27];
-        adjacentNodes[22] = [16, 17, 18, 21, 23, 26, 27, 28];
-        adjacentNodes[23] = [17, 18, 19, 22, 24, 27, 28, 29];
+        adjacentNodes[21] = [15, 16, 17, 20, 22, 25, 26, 27, 34, 35];
+        adjacentNodes[22] = [16, 17, 18, 21, 23, 26, 27, 28, 35, 36];
+        adjacentNodes[23] = [17, 18, 19, 22, 24, 27, 28, 29, 36];
         adjacentNodes[24] = [18, 19, 23, 28, 29];
         
-        // Player 2's crown (nodes 25-28): positions (1,-1), (2,-1), (3,-1), (2,-2)
-        adjacentNodes[25] = [20, 21, 26, 30];
-        adjacentNodes[26] = [20, 21, 22, 25, 27, 30, 31];
-        adjacentNodes[27] = [21, 22, 23, 26, 28, 30, 31, 32];
-        adjacentNodes[28] = [22, 23, 24, 27, 29, 31, 32];
-        adjacentNodes[29] = [23, 24, 28, 32];
-        adjacentNodes[30] = [25, 26, 27, 31];
-        adjacentNodes[31] = [26, 27, 28, 30, 32, 33];
-        adjacentNodes[32] = [27, 28, 29, 31, 33];
+        // Player 2's crown (bottom): (1,-1)=25, (2,-1)=26, (3,-1)=27, (2,-2)=33
+        adjacentNodes[25] = [20, 21, 26, 30, 31];
+        adjacentNodes[26] = [20, 21, 22, 25, 27, 30, 31, 32];
+        adjacentNodes[27] = [21, 22, 23, 26, 28, 31, 32];
+        adjacentNodes[28] = [22, 23, 24, 27, 29, 32];
+        adjacentNodes[29] = [23, 24, 28];
+        adjacentNodes[30] = [25, 26, 31];
+        adjacentNodes[31] = [25, 26, 27, 30, 32, 33];
+        adjacentNodes[32] = [26, 27, 28, 31, 33];
         adjacentNodes[33] = [31, 32];
         
-        // Player 1's crown (nodes 34-36): positions (1,5), (2,5), (3,5), (2,6)
-        adjacentNodes[34] = [5, 6, 35];
-        adjacentNodes[35] = [6, 7, 34, 36];
-        adjacentNodes[36] = [7, 8, 35];
+        // Player 1's crown (top): (1,5)=34, (2,5)=35, (3,5)=36, (2,6)=37 (but we only have 37 nodes, 0-36)
+        // Adjusted: nodes 34, 35, 36 connect to row 3 of main grid
+        adjacentNodes[34] = [16, 21, 35];
+        adjacentNodes[35] = [17, 21, 22, 34, 36];
+        adjacentNodes[36] = [22, 23, 35];
     }
     
     function _initializeGameBoard(string memory roomId) internal {
         GameTypes.Room storage room = rooms[roomId];
         
-        // Player 1 (16 pieces): positions 15-24 (row 3-4 of main grid) + crown 34-36 + extra
+        // Player 1 (16 pieces): bottom half + crown
+        // Row 3 (nodes 15-19): 5 pieces
         room.board[15] = 1; room.board[16] = 1; room.board[17] = 1; room.board[18] = 1; room.board[19] = 1;
+        // Row 4 (nodes 20-24): 5 pieces  
         room.board[20] = 1; room.board[21] = 1; room.board[22] = 1; room.board[23] = 1; room.board[24] = 1;
+        // Crown top (nodes 34-36): 3 pieces
         room.board[34] = 1; room.board[35] = 1; room.board[36] = 1;
-        room.board[10] = 1; room.board[11] = 1; room.board[14] = 1;
+        // Row 2 additional (nodes 10-14): 3 pieces to make 16 total
+        room.board[11] = 1; room.board[12] = 1; room.board[13] = 1;
         
-        // Player 2 (16 pieces): positions 0-9 (row 0-1 of main grid) + crown 25-28 + extra
+        // Player 2 (16 pieces): top half + crown
+        // Row 0 (nodes 0-4): 5 pieces
         room.board[0] = 2; room.board[1] = 2; room.board[2] = 2; room.board[3] = 2; room.board[4] = 2;
+        // Row 1 (nodes 5-9): 5 pieces
         room.board[5] = 2; room.board[6] = 2; room.board[7] = 2; room.board[8] = 2; room.board[9] = 2;
-        room.board[25] = 2; room.board[26] = 2; room.board[27] = 2; room.board[28] = 2;
-        room.board[29] = 2; room.board[30] = 2;
+        // Crown bottom (nodes 25-27, 33): 4 pieces
+        room.board[25] = 2; room.board[26] = 2; room.board[27] = 2; room.board[33] = 2;
+        // Row 2 additional: 2 pieces to make 16 total  
+        room.board[10] = 2; room.board[14] = 2;
     }
     
     function _validateMove(string memory roomId, uint8 from, uint8 to, int8 piece) 
@@ -200,16 +209,12 @@ abstract contract GameEngine {
             return true;
         }
         
-        // 69-move rule: Check if 69 moves have passed without capture
         if (room.movesWithoutCapture >= 69) {
             if (player1Pieces == player2Pieces) {
-                // Equal pieces = Draw
                 _beforeEndGame(roomId, address(0), GameTypes.GameStatus.DrawAccepted);
             } else if (player1Pieces > player2Pieces) {
-                // Player 1 has more pieces = Player 1 wins
                 _beforeEndGame(roomId, room.player1.playerAddress, GameTypes.GameStatus.Completed);
             } else {
-                // Player 2 has more pieces = Player 2 wins
                 _beforeEndGame(roomId, room.player2.playerAddress, GameTypes.GameStatus.Completed);
             }
             return true;
