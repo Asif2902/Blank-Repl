@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "./GameTypes.sol";
+
 library GameUtils {
     function generateRoomId(uint256 timestamp, address sender) internal pure returns (string memory) {
         return string(abi.encodePacked(
@@ -47,8 +49,8 @@ library GameUtils {
         address player1,
         address player2
     ) internal pure returns (uint256 newElo1, uint256 newElo2) {
-        int256 expected1 = _calculateExpectedScore(elo1, elo2);
-        int256 expected2 = _calculateExpectedScore(elo2, elo1);
+        int256 expected1 = int256(calculateExpectedScore(int256(elo1) - int256(elo2)));
+        int256 expected2 = int256(calculateExpectedScore(int256(elo2) - int256(elo1)));
 
         int256 score1;
         int256 score2;
