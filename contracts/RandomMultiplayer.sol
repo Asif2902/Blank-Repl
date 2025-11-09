@@ -104,8 +104,10 @@ contract RandomMultiplayer is GameEngine {
         if (moveType == GameTypes.MoveType.Capture) {
             room.movesWithoutCapture = 0;
             
+            // Chain capture: same piece must continue if more captures available
             if (_hasChainCapture(roomId, to, piece)) {
                 emit GameTypes.MoveMade(roomId, msg.sender, from, to, moveType);
+                // Don't switch turns - same player continues with same piece
                 return;
             }
         } else {

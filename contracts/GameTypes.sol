@@ -8,6 +8,7 @@ library GameTypes {
     uint256 constant PLATFORM_FEE_PERCENT = 1;
     uint256 constant GAME_TIMEOUT = 10 minutes;
     uint256 constant MOVE_LIMIT_FOR_DRAW = 69;
+    uint8 constant INITIAL_PIECES_PER_PLAYER = 16;
     
     enum GameStatus { Waiting, Active, Completed, Resigned, DrawAccepted, Timeout }
     enum RoomType { Friends, Random, Bot }
