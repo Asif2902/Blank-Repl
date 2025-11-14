@@ -53,7 +53,22 @@ contract RoomWithFriends is GameEngine {
     function _startGame(string memory roomId) private {
         GameTypes.Room storage room = rooms[roomId];
         room.status = GameTypes.GameStatus.Active;
-        room.currentTurn = room.player1.playerAddress;
+        
+        // Randomly determine who goes first using block data
+        uint256 randomValue = uint256(keccak256(abi.encodePacked(
+            block.timestamp,
+            block.prevrandao,
+            room.player1.playerAddress,
+            room.player2.playerAddress
+        )));
+        
+        // If random value is even, player1 goes first, otherwise player2
+        if (randomValue % 2 == 0) {
+            room.currentTurn = room.player1.playerAddress;
+        } else {
+            room.currentTurn = room.player2.playerAddress;
+        }
+        
         room.lastMoveTime = block.timestamp;
         
         _initializeGameBoard(roomId);
@@ -196,18 +211,9 @@ contract RoomWithFriends is GameEngine {
         room.winner = winner;
         room.payoutCompleted = true;
         
+        // Friends mode doesn't update ELO - keep original values for event
         uint256 newElo1 = room.player1.elo;
         uint256 newElo2 = room.player2.elo;
-        
-        if (room.player1.hasJoined && room.player2.hasJoined) {
-            (newElo1, newElo2) = hub.updateElo(
-                room.player1.playerAddress,
-                room.player2.playerAddress,
-                room.player1.elo,
-                room.player2.elo,
-                winner
-            );
-        }
         
         if (room.betAmount > 0) {
             hub.processPayout{value: address(this).balance}(
