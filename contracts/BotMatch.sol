@@ -27,24 +27,17 @@ contract BotMatch is GameEngine {
         room.betAmount = 0;
         room.botDifficulty = difficulty;
         room.payoutCompleted = true;
-
-        hub.registerRoom(roomId, msg.sender, address(this));
-        _startGame(roomId);
-
-        emit GameTypes.RoomCreated(roomId, GameTypes.RoomType.Bot, msg.sender, 0);
-        return roomId;
-    }
-
-    function _startGame(string memory roomId) private {
-        GameTypes.Room storage room = rooms[roomId];
         room.status = GameTypes.GameStatus.Active;
-        room.currentTurn = room.player1.playerAddress;
+        room.currentTurn = msg.sender; // Player moves first
         room.lastMoveTime = block.timestamp;
 
         _initializeGameBoard(roomId);
+        hub.registerRoom(roomId, msg.sender, address(this));
         hub.addToActiveRooms(roomId);
 
-        emit GameTypes.PlayerJoined(roomId, room.player2.playerAddress);
+        emit GameTypes.RoomCreated(roomId, GameTypes.RoomType.Bot, msg.sender, 0);
+        emit GameTypes.PlayerJoined(roomId, address(this));
+        return roomId;
     }
 
     function makeMove(string memory roomId, uint8 from, uint8 to) external {
@@ -81,6 +74,8 @@ contract BotMatch is GameEngine {
             room.movesWithoutCapture++;
         }
 
+        emit GameTypes.MoveMade(roomId, msg.sender, from, to, moveType);
+
         if (_checkWinCondition(roomId)) {
             return;
         }
@@ -90,12 +85,15 @@ contract BotMatch is GameEngine {
             return;
         }
 
+        // Bot automatically responds
         room.currentTurn = address(this);
-        room.lastMoveTime = block.timestamp;
-
-        emit GameTypes.MoveMade(roomId, msg.sender, from, to, moveType);
-
         _makeBotMove(roomId);
+        
+        // Set turn back to player if game is still active
+        if (room.status == GameTypes.GameStatus.Active) {
+            room.currentTurn = msg.sender;
+            room.lastMoveTime = block.timestamp;
+        }
     }
 
     function _makeBotMove(string memory roomId) private {
@@ -104,40 +102,52 @@ contract BotMatch is GameEngine {
         uint8 bestFrom = 0;
         uint8 bestTo = 0;
         bool foundMove = false;
+        int8 bestScore = -1000;
 
         bool captureAvailable = _hasCaptureMove(roomId, 2);
 
-        if (captureAvailable) {
-            for (uint8 pos = 0; pos <= 36; pos++) {
-                if (room.board[pos] == 2) {
-                    uint8[] memory adjacent = adjacentNodes[pos];
-                    for (uint i = 0; i < adjacent.length; i++) {
-                        (bool isValid, GameTypes.MoveType moveType) = _validateMove(roomId, pos, adjacent[i], 2);
-                        if (isValid && moveType == GameTypes.MoveType.Capture) {
+        // Scan all possible moves
+        for (uint8 pos = 0; pos <= 36; pos++) {
+            if (room.board[pos] == 2) {
+                uint8[] memory adjacent = adjacentNodes[pos];
+                for (uint i = 0; i < adjacent.length; i++) {
+                    (bool isValid, GameTypes.MoveType moveType) = _validateMove(roomId, pos, adjacent[i], 2);
+                    
+                    // Must capture if available
+                    if (captureAvailable && moveType != GameTypes.MoveType.Capture) {
+                        continue;
+                    }
+                    
+                    if (isValid) {
+                        int8 moveScore = _evaluateMove(roomId, pos, adjacent[i], moveType);
+                        
+                        // Difficulty affects move selection
+                        if (room.botDifficulty == GameTypes.BotDifficulty.Easy) {
+                            // Easy: take first valid move
                             bestFrom = pos;
                             bestTo = adjacent[i];
                             foundMove = true;
                             break;
+                        } else if (room.botDifficulty == GameTypes.BotDifficulty.Medium) {
+                            // Medium: prefer captures, otherwise random-ish
+                            if (moveType == GameTypes.MoveType.Capture || moveScore > bestScore) {
+                                bestScore = moveScore;
+                                bestFrom = pos;
+                                bestTo = adjacent[i];
+                                foundMove = true;
+                            }
+                        } else {
+                            // Hard: always pick best move
+                            if (moveScore > bestScore) {
+                                bestScore = moveScore;
+                                bestFrom = pos;
+                                bestTo = adjacent[i];
+                                foundMove = true;
+                            }
                         }
                     }
-                    if (foundMove) break;
                 }
-            }
-        } else {
-            for (uint8 pos = 0; pos <= 36; pos++) {
-                if (room.board[pos] == 2) {
-                    uint8[] memory adjacent = adjacentNodes[pos];
-                    for (uint i = 0; i < adjacent.length; i++) {
-                        (bool isValid,) = _validateMove(roomId, pos, adjacent[i], 2);
-                        if (isValid) {
-                            bestFrom = pos;
-                            bestTo = adjacent[i];
-                            foundMove = true;
-                            break;
-                        }
-                    }
-                    if (foundMove) break;
-                }
+                if (foundMove && room.botDifficulty == GameTypes.BotDifficulty.Easy) break;
             }
         }
 
@@ -147,17 +157,37 @@ contract BotMatch is GameEngine {
             gameHistory[roomId].push(GameTypes.Move(bestFrom, bestTo, moveType, block.timestamp));
             room.moveCount++;
 
-            if (moveType != GameTypes.MoveType.Capture) {
+            if (moveType == GameTypes.MoveType.Capture) {
+                room.movesWithoutCapture = 0;
+            } else {
                 room.movesWithoutCapture++;
             }
 
             emit GameTypes.MoveMade(roomId, address(this), bestFrom, bestTo, moveType);
 
-            if (!_checkWinCondition(roomId)) {
-                room.currentTurn = room.player1.playerAddress;
-                room.lastMoveTime = block.timestamp;
-            }
+            _checkWinCondition(roomId);
         }
+    }
+
+    function _evaluateMove(string memory roomId, uint8 from, uint8 to, GameTypes.MoveType moveType) private view returns (int8) {
+        int8 score = 0;
+        
+        // Capturing is valuable
+        if (moveType == GameTypes.MoveType.Capture) {
+            score += 50;
+        }
+        
+        // Moving forward (toward player's side) is good
+        if (to > from) {
+            score += 10;
+        }
+        
+        // Center control is valuable
+        if (to >= 10 && to <= 14) {
+            score += 5;
+        }
+        
+        return score;
     }
 
     function resign(string memory roomId) external {
