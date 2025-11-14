@@ -102,7 +102,7 @@ contract BotMatch is GameEngine {
         uint8 bestFrom = 0;
         uint8 bestTo = 0;
         bool foundMove = false;
-        int8 bestScore = -1000;
+        int16 bestScore = -1000;
 
         bool captureAvailable = _hasCaptureMove(roomId, 2);
 
@@ -119,7 +119,7 @@ contract BotMatch is GameEngine {
                     }
                     
                     if (isValid) {
-                        int8 moveScore = _evaluateMove(roomId, pos, adjacent[i], moveType);
+                        int16 moveScore = _evaluateMove(roomId, pos, adjacent[i], moveType);
                         
                         // Difficulty affects move selection
                         if (room.botDifficulty == GameTypes.BotDifficulty.Easy) {
@@ -169,8 +169,8 @@ contract BotMatch is GameEngine {
         }
     }
 
-    function _evaluateMove(string memory roomId, uint8 from, uint8 to, GameTypes.MoveType moveType) private view returns (int8) {
-        int8 score = 0;
+    function _evaluateMove(string memory roomId, uint8 from, uint8 to, GameTypes.MoveType moveType) private view returns (int16) {
+        int16 score = 0;
         
         // Capturing is valuable
         if (moveType == GameTypes.MoveType.Capture) {
