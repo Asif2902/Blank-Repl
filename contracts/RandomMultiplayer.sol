@@ -1,3 +1,4 @@
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
@@ -14,13 +15,49 @@ contract RandomMultiplayer is GameEngine {
         hub = MainHub(_hub);
     }
     
-    function createRandomRoom() external returns (string memory) {
+    // Single function to find/create and join a room
+    function findOrCreateRoom() external returns (string memory) {
+        // Try to find an available waiting room with similar ELO
+        string[] memory waiting = hub.getWaitingRooms();
+        uint256 playerElo = hub.getOrInitElo(msg.sender);
+        
+        // Try to join existing waiting room
+        for (uint i = 0; i < waiting.length; i++) {
+            string memory roomId = waiting[i];
+            GameTypes.Room storage room = rooms[roomId];
+            
+            // Skip if room is not in waiting state or wrong type
+            if (room.status != GameTypes.GameStatus.Waiting || 
+                room.roomType != GameTypes.RoomType.Random) {
+                continue;
+            }
+            
+            // Skip if player trying to join their own room
+            if (room.player1.playerAddress == msg.sender) {
+                continue;
+            }
+            
+            // Check ELO difference
+            uint256 eloDiff = playerElo > room.player1.elo ? 
+                playerElo - room.player1.elo : 
+                room.player1.elo - playerElo;
+            
+            if (eloDiff <= GameTypes.ELO_RANGE) {
+                // Join this room
+                room.player2 = GameTypes.Player(msg.sender, playerElo, true);
+                hub.addPlayerRoom(msg.sender, roomId);
+                _startGame(roomId);
+                return roomId;
+            }
+        }
+        
+        // No suitable room found, create a new one
         string memory roomId = GameUtils.generateRoomId(block.timestamp, msg.sender);
         GameTypes.Room storage room = rooms[roomId];
         
         room.roomId = roomId;
         room.roomType = GameTypes.RoomType.Random;
-        room.player1 = GameTypes.Player(msg.sender, hub.getOrInitElo(msg.sender), true);
+        room.player1 = GameTypes.Player(msg.sender, playerElo, true);
         room.betAmount = 0;
         room.status = GameTypes.GameStatus.Waiting;
         room.botDifficulty = GameTypes.BotDifficulty.None;
@@ -33,30 +70,25 @@ contract RandomMultiplayer is GameEngine {
         return roomId;
     }
     
-    function joinRandomRoom(string memory roomId) external {
-        GameTypes.Room storage room = rooms[roomId];
-        if (room.status != GameTypes.GameStatus.Waiting) revert GameErrors.RoomNotAvailable();
-        if (room.roomType != GameTypes.RoomType.Random) revert GameErrors.NotFriendsRoom();
-        if (room.player2.hasJoined) revert GameErrors.RoomIsFull();
-        if (!room.player1.hasJoined) revert GameErrors.InvalidRoom();
-        if (msg.sender == room.player1.playerAddress) revert GameErrors.CannotPlayYourself();
-        
-        uint256 playerEloValue = hub.getOrInitElo(msg.sender);
-        uint256 eloDiff = playerEloValue > room.player1.elo ? 
-            playerEloValue - room.player1.elo : 
-            room.player1.elo - playerEloValue;
-        
-        if (eloDiff > GameTypes.ELO_RANGE) revert GameErrors.NoSuitableRoomFound();
-        
-        room.player2 = GameTypes.Player(msg.sender, playerEloValue, true);
-        hub.addPlayerRoom(msg.sender, roomId);
-        _startGame(roomId);
-    }
-    
     function _startGame(string memory roomId) private {
         GameTypes.Room storage room = rooms[roomId];
         room.status = GameTypes.GameStatus.Active;
-        room.currentTurn = room.player1.playerAddress;
+        
+        // Randomly determine who goes first using block data
+        uint256 randomValue = uint256(keccak256(abi.encodePacked(
+            block.timestamp,
+            block.prevrandao,
+            room.player1.playerAddress,
+            room.player2.playerAddress
+        )));
+        
+        // If random value is even, player1 goes first, otherwise player2
+        if (randomValue % 2 == 0) {
+            room.currentTurn = room.player1.playerAddress;
+        } else {
+            room.currentTurn = room.player2.playerAddress;
+        }
+        
         room.lastMoveTime = block.timestamp;
         
         _initializeGameBoard(roomId);
@@ -202,6 +234,7 @@ contract RandomMultiplayer is GameEngine {
         uint256 newElo1 = room.player1.elo;
         uint256 newElo2 = room.player2.elo;
         
+        // Only update ELO if both players joined (actual match happened)
         if (room.player1.hasJoined && room.player2.hasJoined) {
             (newElo1, newElo2) = hub.updateElo(
                 room.player1.playerAddress,
@@ -252,6 +285,4 @@ contract RandomMultiplayer is GameEngine {
             player2PieceCount: p2Count
         });
     }
-    
-    
 }
