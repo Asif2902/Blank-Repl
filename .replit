@@ -3,7 +3,7 @@ entrypoint = "README.md"
 modules = ["nodejs-20"]
 
 [nix]
-channel = "stable-24_11"
+channel = "stable-25_05"
 packages = ["cowsay"]
 
 [agent]
@@ -25,9 +25,9 @@ args = "compile"
 name = "compile"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npx hardhat compile"
-
-[workflows.workflow.metadata]
-outputType = "console"
